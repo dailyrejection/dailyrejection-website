@@ -18,7 +18,9 @@ import {
   Sparkles,
   Clock,
   ChevronRight,
-  BarChart3
+  BarChart3,
+  Trash2,
+  Crown
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,13 +33,24 @@ import {
 } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import { ChallengeSubmission } from "@/lib/supabase/types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export const metadata: Metadata = {
   title: "My Profile | Daily Rejection",
   description: "View your profile, submissions, and ranking",
 };
 
-// Define rank thresholds and colors
+// Define expanded rank thresholds with more challenging progression and colors
 const RANKS = [
   { 
     name: "Novice", 
@@ -48,32 +61,80 @@ const RANKS = [
     perks: ["Challenge completion bonuses"]
   },
   { 
-    name: "Bronze", 
+    name: "Apprentice", 
     threshold: 100, 
+    color: "bg-green-200", 
+    textColor: "text-green-700",
+    description: "Learning the basics",
+    perks: ["Rejection technique basics"]
+  },
+  { 
+    name: "Bronze", 
+    threshold: 250, 
     color: "bg-amber-200", 
     textColor: "text-amber-800",
     description: "Rising challenger",
     perks: ["Bronze badge display"]
   },
   { 
+    name: "Bronze Elite", 
+    threshold: 500, 
+    color: "bg-amber-300", 
+    textColor: "text-amber-900",
+    description: "Advancing steadily",
+    perks: ["Enhanced profile visibility"]
+  },
+  { 
     name: "Silver", 
-    threshold: 300, 
+    threshold: 800, 
     color: "bg-slate-300", 
     textColor: "text-slate-700",
     description: "Experienced rejector",
-    perks: ["Increased visibility"]
+    perks: ["Increased community recognition"]
+  },
+  { 
+    name: "Silver Elite", 
+    threshold: 1200, 
+    color: "bg-slate-400", 
+    textColor: "text-slate-800",
+    description: "Mastering rejection",
+    perks: ["Special profile highlights"]
   },
   { 
     name: "Gold", 
-    threshold: 500, 
+    threshold: 1800, 
     color: "bg-yellow-200", 
     textColor: "text-yellow-800",
     description: "Elite performer",
     perks: ["Featured submissions"]
   },
   { 
+    name: "Gold Elite", 
+    threshold: 2500, 
+    color: "bg-yellow-300", 
+    textColor: "text-yellow-900",
+    description: "Outstanding achiever",
+    perks: ["Community role model status"]
+  },
+  { 
+    name: "Platinum", 
+    threshold: 3500, 
+    color: "bg-blue-200", 
+    textColor: "text-blue-800",
+    description: "Expert challenger",
+    perks: ["Premium profile features"]
+  },
+  { 
+    name: "Diamond", 
+    threshold: 5000, 
+    color: "bg-cyan-200", 
+    textColor: "text-cyan-800",
+    description: "Exceptional talent",
+    perks: ["Diamond exclusives"]
+  },
+  { 
     name: "Master", 
-    threshold: 750, 
+    threshold: 7000, 
     color: "bg-purple-200", 
     textColor: "text-purple-800",
     description: "Mastery achieved",
@@ -81,11 +142,19 @@ const RANKS = [
   },
   { 
     name: "Grand Master", 
-    threshold: 1000, 
+    threshold: 10000, 
     color: "bg-red-200", 
     textColor: "text-red-800",
     description: "Legendary status",
     perks: ["Hall of Fame entry"]
+  },
+  { 
+    name: "Rejection Legend", 
+    threshold: 15000, 
+    color: "bg-indigo-200", 
+    textColor: "text-indigo-800",
+    description: "Mythical achiever",
+    perks: ["Legendary exclusive benefits"]
   },
 ];
 
@@ -111,12 +180,19 @@ function getRankDetails(xp: number) {
 // Helper function to get rank icon
 function getRankIcon(rankName: string) {
   switch (rankName) {
-    case "Novice": return <Target className="h-5 w-5" />;
+    case "Novice": return <Target className="h-5 w-5 text-gray-600" />;
+    case "Apprentice": return <Target className="h-5 w-5 text-green-600" />;
     case "Bronze": return <Medal className="h-5 w-5 text-amber-600" />;
-    case "Silver": return <Medal className="h-5 w-5 text-slate-400" />;
+    case "Bronze Elite": return <Medal className="h-5 w-5 text-amber-700" />;
+    case "Silver": return <Medal className="h-5 w-5 text-slate-500" />;
+    case "Silver Elite": return <Medal className="h-5 w-5 text-slate-600" />;
     case "Gold": return <Medal className="h-5 w-5 text-yellow-500" />;
+    case "Gold Elite": return <Medal className="h-5 w-5 text-yellow-600" />;
+    case "Platinum": return <Award className="h-5 w-5 text-blue-600" />;
+    case "Diamond": return <Award className="h-5 w-5 text-cyan-600" />;
     case "Master": return <Trophy className="h-5 w-5 text-purple-600" />;
-    case "Grand Master": return <Award className="h-5 w-5 text-red-600" />;
+    case "Grand Master": return <Trophy className="h-5 w-5 text-red-600" />;
+    case "Rejection Legend": return <Crown className="h-5 w-5 text-indigo-600" />;
     default: return <Star className="h-5 w-5" />;
   }
 }
@@ -125,11 +201,18 @@ function getRankIcon(rankName: string) {
 function getRankColors(rankName: string) {
   switch (rankName) {
     case "Novice": return { bg: "bg-gray-100", text: "text-gray-800", border: "border-gray-200" };
+    case "Apprentice": return { bg: "bg-green-100", text: "text-green-800", border: "border-green-200" };
     case "Bronze": return { bg: "bg-amber-100", text: "text-amber-800", border: "border-amber-200" };
+    case "Bronze Elite": return { bg: "bg-amber-100", text: "text-amber-900", border: "border-amber-300" };
     case "Silver": return { bg: "bg-slate-200", text: "text-slate-800", border: "border-slate-300" };
+    case "Silver Elite": return { bg: "bg-slate-200", text: "text-slate-900", border: "border-slate-400" };
     case "Gold": return { bg: "bg-yellow-100", text: "text-yellow-800", border: "border-yellow-200" };
+    case "Gold Elite": return { bg: "bg-yellow-100", text: "text-yellow-900", border: "border-yellow-300" };
+    case "Platinum": return { bg: "bg-blue-100", text: "text-blue-800", border: "border-blue-200" };
+    case "Diamond": return { bg: "bg-cyan-100", text: "text-cyan-800", border: "border-cyan-200" };
     case "Master": return { bg: "bg-purple-100", text: "text-purple-800", border: "border-purple-200" };
     case "Grand Master": return { bg: "bg-red-100", text: "text-red-800", border: "border-red-200" };
+    case "Rejection Legend": return { bg: "bg-indigo-100", text: "text-indigo-800", border: "border-indigo-200" };
     default: return { bg: "bg-gray-100", text: "text-gray-800", border: "border-gray-200" };
   }
 }
@@ -484,6 +567,41 @@ export default async function MyProfilePage() {
                         <div className="mt-3 text-xs text-gray-400 flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           <span>Submitted {formatDistanceToNow(new Date(submission.created_at), { addSuffix: true })}</span>
+                        </div>
+                        
+                        <div className="mt-3 flex justify-end">
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="text-red-500 border-red-200 hover:bg-red-50 hover:text-red-600 flex items-center gap-1"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                <span>Delete submission</span>
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent className="bg-white/95 backdrop-blur-xl">
+                              <AlertDialogHeader>
+                                <AlertDialogTitle className="text-red-600">Confirm Deletion</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete this submission? This action cannot be undone.
+                                  <p className="mt-2 text-sm font-medium text-gray-800">
+                                    This will also remove any XP points and decrease your challenge completion count.
+                                  </p>
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel className="border-gray-200">Cancel</AlertDialogCancel>
+                                <form action="/api/delete-submission" method="POST">
+                                  <input type="hidden" name="submissionId" value={submission.id} />
+                                  <AlertDialogAction type="submit" className="bg-red-600 hover:bg-red-700 text-white">
+                                    Delete
+                                  </AlertDialogAction>
+                                </form>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         </div>
                       </div>
                     ))}

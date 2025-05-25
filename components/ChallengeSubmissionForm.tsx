@@ -46,6 +46,8 @@ import {
   SortAsc,
   SortDesc,
   Clock,
+  Trash2,
+  Plus,
 } from "lucide-react";
 import { WeeklyChallenge, ChallengeSubmission } from "@/lib/supabase/types";
 import { isValidVideoUrl, getWeekNumber, getWeekRange } from "@/lib/utils";
@@ -55,6 +57,17 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "./ui/avatar";
 import { Separator } from "./ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 // Function to convert URLs to embed URLs
 const getEmbedUrl = (
@@ -169,7 +182,15 @@ const submissionSchema = z
     }
   );
 
+const createChallengeSchema = z.object({
+  title: z.string().min(5, "Título deve ter pelo menos 5 caracteres").max(100, "Título não pode exceder 100 caracteres"),
+  description: z.string().optional(),
+  week: z.number(),
+  year: z.number()
+});
+
 type SubmissionFormData = z.infer<typeof submissionSchema>;
+type CreateChallengeFormData = z.infer<typeof createChallengeSchema>;
 
 type SubmissionData = {
   challenge_id: string;
@@ -220,6 +241,17 @@ export function ChallengeSubmissionForm({
   const [isSubmissionDialogOpen, setIsSubmissionDialogOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [sortOption, setSortOption] = useState<SortOption>("newest");
+  const [user, setUser] = useState<{
+    id: string;
+    email?: string;
+    app_metadata?: Record<string, unknown>;
+    user_metadata?: Record<string, unknown>;
+  } | null>(null);
+
+  // Show create challenge form for admins
+  const [isCreateChallengeDialogOpen, setIsCreateChallengeDialogOpen] = useState(false);
+  const [isCreatingChallenge, setIsCreatingChallenge] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const form = useForm<SubmissionFormData>({
     resolver: zodResolver(submissionSchema),
@@ -229,6 +261,16 @@ export function ChallengeSubmissionForm({
       contact_method: "email",
       contact_value: "",
     },
+  });
+
+  const createChallengeForm = useForm<CreateChallengeFormData>({
+    resolver: zodResolver(createChallengeSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      week: selectedWeek,
+      year: selectedYear
+    }
   });
 
   useEffect(() => {
@@ -251,6 +293,7 @@ export function ChallengeSubmissionForm({
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUserId(session.user.id);
+        setUser(session.user);
 
         // Pre-fill the email field if available
         if (session.user.email) {
@@ -259,6 +302,26 @@ export function ChallengeSubmissionForm({
       }
     });
   }, [supabase.auth, form]);
+
+  // Check if user is admin
+  useEffect(() => {
+    if (user?.id) {
+      supabase
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", user.id)
+        .single()
+        .then(({ data }) => {
+          setIsAdmin(data?.is_admin || false);
+        });
+    }
+  }, [user, supabase]);
+
+  // Update form values when selected week/year changes
+  useEffect(() => {
+    createChallengeForm.setValue("week", selectedWeek);
+    createChallengeForm.setValue("year", selectedYear);
+  }, [selectedWeek, selectedYear, createChallengeForm]);
 
   const fetchChallenges = async () => {
     setIsLoading(true);
@@ -353,6 +416,22 @@ export function ChallengeSubmissionForm({
 
     try {
       setIsSubmitting(true);
+
+      // Check if user already has a submission for this challenge
+      const { data: existingSubmissions, error } = await supabase
+        .from("challenge_submissions")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("challenge_id", currentChallenge.id);
+
+      if (error) {
+        console.error("Error checking existing submissions:", error);
+      } else if (existingSubmissions && existingSubmissions.length > 0) {
+        // User already has a submission for this challenge
+        toast.warning("You already have a submission for this challenge");
+      }
+
+      // Proceed with submission regardless
       await onSubmit({
         challenge_id: currentChallenge.id,
         user_id: userId,
@@ -364,6 +443,7 @@ export function ChallengeSubmissionForm({
       });
 
       // Update XP for challenge completion
+      // The API now checks for duplicate completions, so this is safe to call
       try {
         const response = await fetch("/api/xp/update", {
           method: "POST",
@@ -379,7 +459,12 @@ export function ChallengeSubmissionForm({
 
         if (response.ok) {
           const result = await response.json();
-          toast.success(`+${result.data.xpAdded} XP earned!`);
+          if (result.data.message) {
+            // If the API detected a duplicate, show a different message
+            toast.success(`Participação registrada! ${result.data.xpAdded} XP ganhos!`);
+          } else {
+            toast.success(`+${result.data.xpAdded} XP ganhos!`);
+          }
         }
       } catch (xpError) {
         console.error("Failed to update XP:", xpError);
@@ -415,6 +500,60 @@ export function ChallengeSubmissionForm({
   // Toggle sort order function
   const toggleSortOrder = () => {
     setSortOption(sortOption === "newest" ? "oldest" : "newest");
+  };
+
+  // Handle challenge creation
+  const handleCreateChallenge = async (data: CreateChallengeFormData) => {
+    if (!user?.id) {
+      toast.error("Você precisa estar logado para criar um desafio");
+      return;
+    }
+
+    try {
+      setIsCreatingChallenge(true);
+
+      // Check if a challenge already exists for this week
+      const existingChallenge = challenges.find(
+        (c) => c.week === data.week && c.year === data.year
+      );
+
+      if (existingChallenge) {
+        toast.error(
+          `Um desafio já existe para semana ${data.week}, ${data.year}`
+        );
+        return;
+      }
+
+      // Create the challenge
+      const { error } = await supabase
+        .from("weekly_challenges")
+        .insert({
+          title: data.title,
+          description: data.description || null,
+          week: data.week,
+          year: data.year
+        });
+
+      if (error) {
+        if (error.code === "23505") {
+          toast.error(`Um desafio já existe para semana ${data.week}, ${data.year}`);
+        } else {
+          console.error("Error creating challenge:", error);
+          toast.error("Erro ao criar o desafio. Por favor, tente novamente.");
+        }
+        return;
+      }
+
+      toast.success("Desafio criado com sucesso!");
+      createChallengeForm.reset();
+      setIsCreateChallengeDialogOpen(false);
+      fetchChallenges();
+    } catch (error) {
+      console.error("Error creating challenge:", error);
+      toast.error("Ocorreu um erro ao criar o desafio.");
+    } finally {
+      setIsCreatingChallenge(false);
+    }
   };
 
   return (
@@ -479,7 +618,7 @@ export function ChallengeSubmissionForm({
           )}
         </div>
 
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-center gap-4 flex-wrap">
           <Dialog
             open={isFilterDialogOpen}
             onOpenChange={setIsFilterDialogOpen}
@@ -694,6 +833,97 @@ export function ChallengeSubmissionForm({
                           <>
                             <Send className="mr-2 h-4 w-4" />
                             Submit participation
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {/* Admin: Create Challenge Button */}
+          {isAdmin && !currentChallenge && (
+            <Dialog 
+              open={isCreateChallengeDialogOpen} 
+              onOpenChange={setIsCreateChallengeDialogOpen}
+            >
+              <DialogTrigger asChild>
+                <Button className="rounded-full px-4 shadow-md transition-all bg-amber-500 hover:bg-amber-600">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Criar Desafio
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="bg-white/95 backdrop-blur-sm sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>Criar Novo Desafio</DialogTitle>
+                  <DialogDescription>
+                    Criar um desafio para a semana {selectedWeek}, {selectedYear}
+                  </DialogDescription>
+                </DialogHeader>
+                
+                <Form {...createChallengeForm}>
+                  <form
+                    onSubmit={createChallengeForm.handleSubmit(handleCreateChallenge)}
+                    className="space-y-6"
+                  >
+                    <FormField
+                      control={createChallengeForm.control}
+                      name="title"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Título</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Título do desafio"
+                              {...field}
+                              className="border-gray-300 focus:border-green-500 focus:ring-green-500"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={createChallengeForm.control}
+                      name="description"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Descrição (opcional)</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder="Descreva o desafio em detalhes..."
+                              className="min-h-[120px] border-gray-300 focus:border-green-500 focus:ring-green-500"
+                              {...field}
+                              value={field.value || ""}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="bg-gray-50 p-3 rounded-md text-sm text-gray-600">
+                      Este desafio será criado para a semana {selectedWeek}, {selectedYear}
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        type="submit"
+                        disabled={isCreatingChallenge}
+                        className="w-full transition-all"
+                      >
+                        {isCreatingChallenge ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Criando...
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="mr-2 h-4 w-4" />
+                            Criar Desafio
                           </>
                         )}
                       </Button>
@@ -1027,6 +1257,74 @@ export function ChallengeSubmissionForm({
                         </>
                       );
                     })()}
+                  </div>
+                )}
+                
+                {/* Delete button - only visible for the user who owns the submission */}
+                {user && selectedSubmission.user_id === user.id && (
+                  <div className="mt-4 pt-4 border-t">
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          className="text-red-500 border-red-200 hover:bg-red-50 hover:text-red-600 flex items-center gap-1"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          <span>Delete submission</span>
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="bg-white/95 backdrop-blur-xl">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle className="text-red-600">Confirm Deletion</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete this submission? This action cannot be undone.
+                            <p className="mt-2 text-sm font-medium text-gray-800">
+                              This will also remove any XP points and decrease your challenge completion count.
+                            </p>
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="border-gray-200">Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={async () => {
+                              try {
+                                // Call the API endpoint to delete the submission and update XP
+                                const response = await fetch('/api/delete-submission', {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                  },
+                                  body: JSON.stringify({
+                                    submissionId: selectedSubmission.id,
+                                    cleanupMode: 'all'
+                                  }),
+                                });
+                                
+                                if (!response.ok) {
+                                  const errorData = await response.json();
+                                  toast.error(errorData.error || 'Failed to delete submission');
+                                  return;
+                                }
+                                
+                                toast.success('Submission deleted successfully');
+                                setIsSubmissionDialogOpen(false);
+                                
+                                // Refresh submissions after deletion
+                                if (currentChallenge) {
+                                  fetchSubmissions(currentChallenge.id);
+                                }
+                              } catch (error) {
+                                console.error('Error deleting submission:', error);
+                                toast.error('An error occurred while deleting the submission');
+                              }
+                            }}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 )}
               </div>

@@ -5,38 +5,6 @@ import { ChallengeSubmissionForm } from "@/components/ChallengeSubmissionForm";
 import { getWeekNumber } from "@/lib/utils";
 import { Target, Calendar, Users, Trophy } from "lucide-react";
 
-// Define rank thresholds
-const RANKS = [
-  { name: "Novice", threshold: 0 },
-  { name: "Bronze", threshold: 100 },
-  { name: "Silver", threshold: 300 },
-  { name: "Gold", threshold: 500 },
-  { name: "Master", threshold: 750 },
-  { name: "Grand Master", threshold: 1000 },
-];
-
-// XP values
-const XP_VALUES = {
-  CHALLENGE_COMPLETION: 100,
-  CHALLENGE_WIN: 200,
-  CHALLENGE_PARTICIPATION: 10,
-};
-
-// Helper function to determine rank based on XP
-function calculateRank(xp: number): string {
-  let rank = "Novice";
-
-  for (const rankLevel of RANKS) {
-    if (xp >= rankLevel.threshold) {
-      rank = rankLevel.name;
-    } else {
-      break;
-    }
-  }
-
-  return rank;
-}
-
 export const metadata: Metadata = {
   title: "Weekly Challenges | Daily Rejection",
   description: "Participate in weekly challenges and win prizes!",
@@ -117,37 +85,8 @@ export default async function WeeklyChallengesPage() {
                   contact_value: data.contact_value,
                 });
 
-                // Award participation XP directly
-                try {
-                  // Get current user profile
-                  const { data: profile } = await supabase
-                    .from("profiles")
-                    .select("experience_points, challenges_completed")
-                    .eq("id", data.user_id)
-                    .single();
-
-                  if (profile) {
-                    // Calculate new XP and rank
-                    const xpToAdd = XP_VALUES.CHALLENGE_PARTICIPATION;
-                    const newXP = (profile.experience_points || 0) + xpToAdd;
-                    const newRank = calculateRank(newXP);
-
-                    // Update user profile
-                    await supabase
-                      .from("profiles")
-                      .update({
-                        experience_points: newXP,
-                        rank_level: newRank,
-                        updated_at: new Date().toISOString(),
-                      })
-                      .eq("id", data.user_id);
-                  }
-                } catch (error) {
-                  console.error(
-                    "Failed to update XP for participation:",
-                    error
-                  );
-                }
+                // Note: XP and challenges_completed update is handled entirely by the XP API endpoint
+                // and should not be duplicated here to avoid double counting
               }}
             />
           </div>
