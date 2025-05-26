@@ -183,7 +183,7 @@ const submissionSchema = z
   );
 
 const createChallengeSchema = z.object({
-  title: z.string().min(5, "Título deve ter pelo menos 5 caracteres").max(100, "Título não pode exceder 100 caracteres"),
+  title: z.string().min(5, "Title must have at least 5 characters").max(100, "Title cannot exceed 100 characters"),
   description: z.string().optional(),
   week: z.number(),
   year: z.number()
@@ -247,6 +247,12 @@ export function ChallengeSubmissionForm({
     app_metadata?: Record<string, unknown>;
     user_metadata?: Record<string, unknown>;
   } | null>(null);
+
+  // Daily submissions limit state
+  const [submissionsRemaining, setSubmissionsRemaining] = useState(3); // Default to max
+  const [resetTimeHours, setResetTimeHours] = useState(0);
+  const [resetTimeMinutes, setResetTimeMinutes] = useState(0);
+  const [canSubmit, setCanSubmit] = useState(true);
 
   // Show create challenge form for admins
   const [isCreateChallengeDialogOpen, setIsCreateChallengeDialogOpen] = useState(false);
@@ -403,6 +409,49 @@ export function ChallengeSubmissionForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChallenge, sortOption]);
 
+  // Check daily submission limits
+  const checkDailySubmissionLimits = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch("/api/check-daily-submissions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId,
+        }),
+      });
+      
+      if (response.ok) {
+        const { data } = await response.json();
+        setSubmissionsRemaining(data.submissionsRemaining);
+        setResetTimeHours(data.resetTime.hours);
+        setResetTimeMinutes(data.resetTime.minutes);
+        setCanSubmit(data.canSubmit);
+      } else {
+        console.error("Failed to check submission limits");
+      }
+    } catch (error) {
+      console.error("Error checking submission limits:", error);
+    }
+  };
+
+  // Call this when component mounts and user changes
+  useEffect(() => {
+    if (userId) {
+      checkDailySubmissionLimits();
+    }
+  }, [userId]);
+
+  // Also check after a successful submission
+  const refreshSubmissionLimits = () => {
+    if (userId) {
+      checkDailySubmissionLimits();
+    }
+  };
+
   const handleSubmit = async (data: SubmissionFormData) => {
     if (!currentChallenge) {
       toast.error("No active challenge to submit to");
@@ -414,11 +463,17 @@ export function ChallengeSubmissionForm({
       return;
     }
 
+    // Check if user can submit
+    if (!canSubmit) {
+      toast.error(`You've reached the daily limit of 3 challenge submissions. Next reset in ${resetTimeHours}h ${resetTimeMinutes}m.`);
+      return;
+    }
+
     try {
       setIsSubmitting(true);
 
       // Check if user already has a submission for this challenge
-      const { data: existingSubmissions, error } = await supabase
+      const { error } = await supabase
         .from("challenge_submissions")
         .select("id")
         .eq("user_id", userId)
@@ -426,10 +481,10 @@ export function ChallengeSubmissionForm({
 
       if (error) {
         console.error("Error checking existing submissions:", error);
-      } else if (existingSubmissions && existingSubmissions.length > 0) {
-        // User already has a submission for this challenge
-        toast.warning("You already have a submission for this challenge");
       }
+      
+      // We no longer warn about duplicate submissions, allowing multiple entries
+      // for the same challenge within the daily limit
 
       // Proceed with submission regardless
       await onSubmit({
@@ -461,9 +516,9 @@ export function ChallengeSubmissionForm({
           const result = await response.json();
           if (result.data.message) {
             // If the API detected a duplicate, show a different message
-            toast.success(`Participação registrada! ${result.data.xpAdded} XP ganhos!`);
+            toast.success(`Participation registered! ${result.data.xpAdded} XP earned!`);
           } else {
-            toast.success(`+${result.data.xpAdded} XP ganhos!`);
+            toast.success(`+${result.data.xpAdded} XP earned!`);
           }
         }
       } catch (xpError) {
@@ -475,6 +530,9 @@ export function ChallengeSubmissionForm({
       setCharCount(0);
       setIsDialogOpen(false);
       toast.success("Your participation has been submitted successfully!");
+
+      // Refresh submission limits after submitting
+      refreshSubmissionLimits();
 
       // Refresh submissions after submitting
       fetchSubmissions(currentChallenge.id);
@@ -505,7 +563,7 @@ export function ChallengeSubmissionForm({
   // Handle challenge creation
   const handleCreateChallenge = async (data: CreateChallengeFormData) => {
     if (!user?.id) {
-      toast.error("Você precisa estar logado para criar um desafio");
+      toast.error("You need to be logged in to create a challenge");
       return;
     }
 
@@ -519,7 +577,7 @@ export function ChallengeSubmissionForm({
 
       if (existingChallenge) {
         toast.error(
-          `Um desafio já existe para semana ${data.week}, ${data.year}`
+          `A challenge already exists for week ${data.week}, ${data.year}`
         );
         return;
       }
@@ -536,21 +594,21 @@ export function ChallengeSubmissionForm({
 
       if (error) {
         if (error.code === "23505") {
-          toast.error(`Um desafio já existe para semana ${data.week}, ${data.year}`);
+          toast.error(`A challenge already exists for week ${data.week}, ${data.year}`);
         } else {
           console.error("Error creating challenge:", error);
-          toast.error("Erro ao criar o desafio. Por favor, tente novamente.");
+          toast.error("Error creating the challenge. Please try again.");
         }
         return;
       }
 
-      toast.success("Desafio criado com sucesso!");
+      toast.success("Challenge created successfully!");
       createChallengeForm.reset();
       setIsCreateChallengeDialogOpen(false);
       fetchChallenges();
     } catch (error) {
       console.error("Error creating challenge:", error);
-      toast.error("Ocorreu um erro ao criar o desafio.");
+      toast.error("An error occurred while creating the challenge.");
     } finally {
       setIsCreatingChallenge(false);
     }
@@ -582,6 +640,18 @@ export function ChallengeSubmissionForm({
               <div className="prose prose-green max-w-none mt-4">
                 <p>{currentChallenge.description}</p>
               </div>
+
+              {/* Display daily submission limits */}
+              {user && (
+                <div className="mt-4 flex items-center justify-center gap-2 text-sm">
+                  <div className={`px-3 py-1 rounded-full ${submissionsRemaining > 0 ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                    <span className="font-medium">{submissionsRemaining}</span> of 3 daily submissions remaining
+                  </div>
+                  <div className="px-3 py-1 rounded-full bg-gray-100 text-gray-700">
+                    Resets in <span className="font-medium">{resetTimeHours}h {resetTimeMinutes}m</span>
+                  </div>
+                </div>
+              )}
 
               {currentChallenge.tiktok_link && (
                 <div className="mt-4 pt-4 border-t max-w-md mx-auto">
@@ -662,7 +732,11 @@ export function ChallengeSubmissionForm({
           {currentChallenge && (
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="rounded-full px-4 shadow-md transition-all">
+                <Button 
+                  className="rounded-full px-4 shadow-md transition-all"
+                  disabled={!canSubmit}
+                  title={!canSubmit ? `Daily limit reached. Resets in ${resetTimeHours}h ${resetTimeMinutes}m` : ""}
+                >
                   <PenLine className="h-4 w-4 mr-2" />
                   Submit Your Participation
                 </Button>
@@ -852,14 +926,14 @@ export function ChallengeSubmissionForm({
               <DialogTrigger asChild>
                 <Button className="rounded-full px-4 shadow-md transition-all bg-amber-500 hover:bg-amber-600">
                   <Plus className="h-4 w-4 mr-2" />
-                  Criar Desafio
+                  Create Challenge
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-white/95 backdrop-blur-sm sm:max-w-[500px]">
                 <DialogHeader>
-                  <DialogTitle>Criar Novo Desafio</DialogTitle>
+                  <DialogTitle>Create New Challenge</DialogTitle>
                   <DialogDescription>
-                    Criar um desafio para a semana {selectedWeek}, {selectedYear}
+                    Create a challenge for week {selectedWeek}, {selectedYear}
                   </DialogDescription>
                 </DialogHeader>
                 
@@ -873,10 +947,10 @@ export function ChallengeSubmissionForm({
                       name="title"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Título</FormLabel>
+                          <FormLabel>Title</FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="Título do desafio"
+                              placeholder="Challenge title"
                               {...field}
                               className="border-gray-300 focus:border-green-500 focus:ring-green-500"
                             />
@@ -891,10 +965,10 @@ export function ChallengeSubmissionForm({
                       name="description"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Descrição (opcional)</FormLabel>
+                          <FormLabel>Description (optional)</FormLabel>
                           <FormControl>
                             <Textarea
-                              placeholder="Descreva o desafio em detalhes..."
+                              placeholder="Describe the challenge in detail..."
                               className="min-h-[120px] border-gray-300 focus:border-green-500 focus:ring-green-500"
                               {...field}
                               value={field.value || ""}
@@ -906,7 +980,7 @@ export function ChallengeSubmissionForm({
                     />
 
                     <div className="bg-gray-50 p-3 rounded-md text-sm text-gray-600">
-                      Este desafio será criado para a semana {selectedWeek}, {selectedYear}
+                      This challenge will be created for week {selectedWeek}, {selectedYear}
                     </div>
 
                     <div className="pt-2">
@@ -918,12 +992,12 @@ export function ChallengeSubmissionForm({
                         {isCreatingChallenge ? (
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Criando...
+                            Creating...
                           </>
                         ) : (
                           <>
                             <Plus className="mr-2 h-4 w-4" />
-                            Criar Desafio
+                            Create Challenge
                           </>
                         )}
                       </Button>
@@ -999,7 +1073,7 @@ export function ChallengeSubmissionForm({
                       {submissions.map((submission) => (
                         <div key={submission.id} className="break-inside-avoid mb-4 w-full">
                           <Card
-                            className={`overflow-hidden hover:shadow-md transition-all cursor-pointer w-full ${
+                            className={`overflow-hidden transition-all cursor-pointer w-full ${
                               submission.id ===
                               currentChallenge.winner_submission_id
                                 ? "border-amber-300 bg-amber-50/30"
@@ -1260,8 +1334,8 @@ export function ChallengeSubmissionForm({
                   </div>
                 )}
                 
-                {/* Delete button - only visible for the user who owns the submission */}
-                {user && selectedSubmission.user_id === user.id && (
+                {/* Delete button - show for user's own submissions or for admins */}
+                {user && (selectedSubmission.user_id === user.id || isAdmin) && (
                   <div className="mt-4 pt-4 border-t">
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -1279,7 +1353,12 @@ export function ChallengeSubmissionForm({
                           <AlertDialogDescription>
                             Are you sure you want to delete this submission? This action cannot be undone.
                             <p className="mt-2 text-sm font-medium text-gray-800">
-                              This will also remove any XP points and decrease your challenge completion count.
+                              This will also remove any XP points and decrease the user&apos;s challenge completion count.
+                              {isAdmin && selectedSubmission.user_id !== user.id && (
+                                <span className="block mt-1 text-amber-600">
+                                  You are deleting another user&apos;s submission as an administrator.
+                                </span>
+                              )}
                             </p>
                           </AlertDialogDescription>
                         </AlertDialogHeader>
@@ -1296,7 +1375,7 @@ export function ChallengeSubmissionForm({
                                   },
                                   body: JSON.stringify({
                                     submissionId: selectedSubmission.id,
-                                    cleanupMode: 'all'
+                                    cleanupMode: 'single' // Changed from 'all' to 'single' to delete only this submission
                                   }),
                                 });
                                 

@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "./button";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/supabase/types";
-import { Settings, LogOut, ChevronDown, Target, ShieldCheck, User as UserIcon } from "lucide-react";
+import { Settings, LogOut, ChevronDown, Target, ShieldCheck, User as UserIcon, Clock } from "lucide-react";
 import { User } from "@supabase/supabase-js";
 import {
   DropdownMenu,
@@ -18,6 +18,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "./badge";
+import { cn } from "@/lib/utils";
+
+// Type for daily submissions info
+type DailySubmissionsInfo = {
+  submissionsToday: number;
+  submissionsRemaining: number;
+  maxDailySubmissions: number;
+  canSubmit: boolean;
+  resetTime: {
+    hours: number;
+    minutes: number;
+  };
+}
 
 function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -103,6 +116,46 @@ export function Navbar() {
   const { profile, loading: profileLoading } = useProfile(user);
   const isLoading = authLoading || profileLoading;
   const supabase = createClient();
+  const [dailySubmissions, setDailySubmissions] = useState<DailySubmissionsInfo | null>(null);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+
+  // Fetch daily submission limits when user is loaded
+  useEffect(() => {
+    const fetchDailySubmissionLimits = async () => {
+      if (!user) return;
+      
+      try {
+        setLoadingSubmissions(true);
+        const response = await fetch("/api/check-daily-submissions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: user.id,
+          }),
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          setDailySubmissions(result.data);
+        }
+      } catch (error) {
+        console.error("Error fetching daily submission limits:", error);
+      } finally {
+        setLoadingSubmissions(false);
+      }
+    };
+    
+    fetchDailySubmissionLimits();
+    
+    // Set up interval to refresh the reset time
+    const interval = setInterval(() => {
+      fetchDailySubmissionLimits();
+    }, 60000); // Update every minute
+    
+    return () => clearInterval(interval);
+  }, [user]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -175,7 +228,7 @@ export function Navbar() {
                   align="end"
                   className="w-56 bg-white/95 backdrop-blur-sm border border-gray-200/50 shadow-xl rounded-xl"
                 >
-                  <DropdownMenuLabel className="text-xs font-medium text-gray-500">
+                  <DropdownMenuLabel className="text-xs font-semibold text-gray-500">
                     My Account
                   </DropdownMenuLabel>
                   
@@ -201,6 +254,43 @@ export function Navbar() {
                         {profile.rank_level || 'Novice'}
                       </Badge>
                     </div>
+                    
+                    {/* Daily Submission Limits */}
+                    {dailySubmissions && (
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">Daily Submissions</span>
+                          <Badge 
+                            className={cn(
+                              "text-xs",
+                              dailySubmissions.submissionsRemaining > 0 
+                                ? "bg-green-100 text-green-800 border-green-200" 
+                                : "bg-amber-100 text-amber-800 border-amber-200"
+                            )}
+                          >
+                            {dailySubmissions.submissionsToday} / {dailySubmissions.maxDailySubmissions}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-gray-500 flex items-center">
+                            <Clock className="h-3 w-3 mr-1 text-gray-400" />
+                            Reset in
+                          </span>
+                          <span className="text-xs font-medium text-gray-700">
+                            {dailySubmissions.resetTime.hours}h {dailySubmissions.resetTime.minutes}m
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {loadingSubmissions && !dailySubmissions && (
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">Daily Submissions</span>
+                          <div className="h-4 w-12 bg-gray-100 animate-pulse rounded"></div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   <DropdownMenuSeparator />
